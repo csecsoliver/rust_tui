@@ -2,7 +2,8 @@ image: alpine/latest
 packages:
     - cargo
     - hut
-    - openssl
+    - openssl-dev
+    - linux-headers
 sources:
     - https://git.sr.ht/~csoliver/rust_tui
 tasks:
