@@ -2,6 +2,7 @@ image: alpine/latest
 packages:
     - cargo
     - hut
+    - openssl
 sources:
     - https://git.sr.ht/~csoliver/rust_tui
 tasks:
