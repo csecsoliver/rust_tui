@@ -5,9 +5,8 @@ packages:
 sources:
     - https://git.sr.ht/~csoliver/rust_tui
 tasks:
-    - setup: |
-          cd rust_tui
     - build: |
+          cd rust_tui
           cargo build --release
     - upload: |
           hut git artifact upload rust_tui/target/release/rust_tui
