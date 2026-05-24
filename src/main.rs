@@ -13,12 +13,15 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
-use std::sync::{Arc, RwLock};
+use std::{
+    env,
+    sync::{Arc, RwLock},
+};
 use std::{io, sync::OnceLock, thread, time::Duration};
 static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
@@ -32,7 +35,8 @@ type ThreadSafeError = Box<dyn std::error::Error + Send + Sync>;
 struct JulesApp {
     api_key: String,
     sessions_page: Arc<RwLock<Option<Result<SessionsPage, ThreadSafeError>>>>,
-    selected_session: Option<usize>,
+    selected_session_num: Option<usize>,
+    selected_session: Arc<RwLock<Option<Result<Value, ThreadSafeError>>>>,
 }
 
 #[derive(Deserialize)]
@@ -56,10 +60,12 @@ struct SessionRes {
 impl JulesApp {
     fn new(api_key: String) -> Self {
         let sessions_page = Arc::new(RwLock::new(None));
+        let selected_session = Arc::new(RwLock::new(None));
         let asd = Self {
             api_key,
             sessions_page,
-            selected_session: None,
+            selected_session,
+            selected_session_num: None,
         };
         return asd;
     }
@@ -107,6 +113,7 @@ fn run_app(
     app: &mut JulesApp,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     session_list_state: &mut ListState,
+    session_view_scroll: &mut u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = app.start_fetch(
         format!("v1alpha/sessions?pageSize=50"),
@@ -123,10 +130,87 @@ fn run_app(
                     Constraint::Length(1),
                 ])
                 .split(area);
-            match app.selected_session {
+            match app.selected_session_num {
                 Some(sel) => {
 
+                    match app.selected_session.clone().try_read() {
+                        Ok(r) => match &*r {
+                            Some(Ok(v)) => {
+                                let header_text = format!("Session: {} Repo: {}, Title: {}", v["state"], v["sourceContext"]["source"], v["title"]);
+                                let header = Paragraph::new(header_text)
+                                    .block(Block::default().borders(Borders::ALL).title("Jules TUI"))
+                                    .style(
+                                        Style::default()
+                                            .fg(Color::Cyan)
+                                            .add_modifier(Modifier::BOLD),
+                                    );
+                                f.render_widget(header, chunks[0]);
+                                let content = Paragraph::new(format!("{}", v["prompt"].as_str().unwrap_or("no prompt")))
+                                    .scroll((*session_view_scroll,0))
+                                    .wrap(Wrap { trim: false })
+                                    .block(Block::default()
+                                    .borders(Borders::ALL)
+                                    .title(format!("Prompt {session_view_scroll}")));
+                                f.render_widget(content, chunks[1]);
+                            },
+                            Some(Err(e)) => {
+                                f.render_widget(
+                                    Line::from(Span::styled(
+                                        format!("{}", e.to_string()),
+                                        Style::default().fg(Color::Red),
+                                    )),
+                                    chunks[1],
+                                );
+                            },
+                            None => {
+                                match app.sessions_page.clone().try_read() {
+                                    Ok(r) => {
+                                        if let Some(Ok(v)) = &*r {
+                                            let session_id = v.sessions[sel]["id"].as_str().unwrap_or("");
+                                            let _ = app.start_fetch(
+                                                format!("v1alpha/sessions/{session_id}"),
+                                                app.selected_session.clone(),
+                                            );
+                                            f.render_widget(
+                                                Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
+                                                chunks[1],
+                                            );
+                                        } else {
+                                            f.render_widget(
+                                                Line::from(Span::styled("no sessions list available", Style::default().fg(Color::Red))),
+                                                chunks[1],
+                                            );
+                                        }
+                                    },
+                                    Err(e) => match e {
+                                        std::sync::TryLockError::Poisoned(_) => {
+                                            f.render_widget(
+                                                Line::from(Span::styled(
+                                                    "the lock is poisoned. the fetcher thread probably paniced.",
+                                                    Style::default().fg(Color::Red),
+                                                )),
+                                                chunks[1],
+                                            );
+                                        }
+                                        std::sync::TryLockError::WouldBlock => {
+                                            f.render_widget(
+                                                Line::from(Span::styled("Waiting for sessions list...", Style::default().fg(Color::Red))),
+                                                chunks[1],
+                                            );
+                                        }
+                                    }
+                                };
 
+
+                            }
+                        },
+                        Err(e) =>{
+                            f.render_widget(
+                                Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
+                                chunks[1],
+                            );
+                        }
+                    }
 
                 },
                 None => {
@@ -139,7 +223,7 @@ fn run_app(
                                 .add_modifier(Modifier::BOLD),
                         );
                     f.render_widget(header, chunks[0]);
-                    match app.sessions_page.try_read() {
+                    match app.sessions_page.clone().try_read() {
                         Ok(r) => match &*r {
                             Some(Ok(v)) => {
                                 let mut lines: Vec<Line> = Vec::new();
@@ -191,6 +275,10 @@ fn run_app(
                                     Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
                                     chunks[1],
                                 );
+                                let _ = app.start_fetch(
+                                    format!("v1alpha/sessions?pageSize=50"),
+                                    app.sessions_page.clone(),
+                                );
                             }
                         },
                         Err(e) => match e {
@@ -225,13 +313,26 @@ fn run_app(
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
-                        KeyCode::Down | KeyCode::Char('j') => session_list_state.select_next(),
-                        KeyCode::Up | KeyCode::Char('k') => session_list_state.select_previous(),
+                        KeyCode::Char('q') => break,
+                        KeyCode::Down | KeyCode::Char('j') => match app.selected_session_num {
+                            Some(_) => {
+                                *session_view_scroll = session_view_scroll.saturating_add(1);
+                            }
+                            None => session_list_state.select_next(),
+                        },
+                        KeyCode::Up | KeyCode::Char('k') => match app.selected_session_num {
+                            Some(_) => {
+                                *session_view_scroll = session_view_scroll.saturating_sub(1);
+                            }
+                            None => {
+                                session_list_state.select_previous();
+                            }
+                        },
                         KeyCode::Enter => match session_list_state.selected() {
                             Some(s) => {
                                 if s % 2 == 0 {
-                                    app.selected_session = Some(s / 2);
+                                    app.selected_session_num = Some(s / 2);
+                                    *session_view_scroll = 0;
                                 } else {
                                     match app.sessions_page.try_read() {
                                         Ok(r) => {
@@ -250,6 +351,11 @@ fn run_app(
                             }
                             None => {}
                         },
+                        KeyCode::Esc => {
+                            app.selected_session_num = None;
+                            app.sessions_page = Arc::new(RwLock::new(None));
+                            app.selected_session = Arc::new(RwLock::new(None));
+                        }
                         _ => {}
                     }
                 }
@@ -260,6 +366,11 @@ fn run_app(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <jules api key>", args[0]);
+        std::process::exit(1);
+    }
     let _ = enable_raw_mode();
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -267,10 +378,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut session_list_state: ListState = ListState::default();
-    let mut app = JulesApp::new(format!(
-        "AQ.Ab8RN6LYT8p7IElcMQbfqD5GvCrHj8pNna_9_WC_fEppVhwqGQ"
-    ));
-    let result = run_app(&mut app, &mut terminal, &mut session_list_state);
+    let mut session_view_scroll: u16 = 0;
+    let mut app = JulesApp::new(format!("{}", &args[1]));
+    let result = run_app(
+        &mut app,
+        &mut terminal,
+        &mut session_list_state,
+        &mut session_view_scroll,
+    );
     let _ = disable_raw_mode();
     execute!(
         terminal.backend_mut(),
