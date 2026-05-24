@@ -4,6 +4,8 @@ packages:
     - hut
     - openssl-dev
     - linux-headers
+secrets:
+    - 672f4388-c502-4fc2-b8e8-8cc0d2d5d6e9
 oauth: ""
 sources:
     - https://git.sr.ht/~csoliver/rust_tui
@@ -13,7 +15,7 @@ tasks:
           cargo build --release
     - upload: |
           cd rust_tui
-          hut git artifact upload rust_tui/target/release/rust_tui
+          hut git artifact upload target/release/rust_tui
 submitter:
     git.sr.ht:
         enabled: true
