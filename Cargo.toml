@@ -2,6 +2,8 @@
 name = "rust_tui"
 version = "0.1.0"
 edition = "2024"
+description = "A tui for viewing jules sessions and their prompts"
+license = "MIT"
 
 [dependencies]
 crossterm = "0.28"
