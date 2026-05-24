@@ -4,6 +4,7 @@ packages:
     - hut
     - openssl-dev
     - linux-headers
+oauth: ""
 sources:
     - https://git.sr.ht/~csoliver/rust_tui
 tasks:
@@ -11,10 +12,10 @@ tasks:
           cd rust_tui
           cargo build --release
     - upload: |
+          cd rust_tui
           hut git artifact upload rust_tui/target/release/rust_tui
 submitter:
     git.sr.ht:
         enabled: true
         allow-refs:
-            - refs/heads/master
             - "refs/tags/*"
