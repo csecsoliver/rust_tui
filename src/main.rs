@@ -8,13 +8,14 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
-    style::{Modifier, Style},
-    widgets::{Block, Borders, Paragraph, canvas::Line},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
-use std::{io, ops::DerefMut, sync::OnceLock, thread, time::Duration};
+use std::{io, sync::OnceLock, thread, time::Duration};
 static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 fn get_client() -> reqwest::blocking::Client {
@@ -32,7 +33,7 @@ struct JulesApp {
 struct SessionsPage {
     sessions: Vec<Value>,
     #[serde(rename = "nextPageToken")]
-    next_page_token: String,
+    next_page_token: Option<String>,
 }
 #[derive(Deserialize)]
 struct SessionRes {
@@ -55,7 +56,6 @@ impl JulesApp {
         };
         return asd;
     }
-
     fn start_fetch(&mut self, route: String) -> Result<(), Box<dyn std::error::Error>> {
         let key = self.api_key.clone();
         let api_response = self.api_response.clone();
@@ -94,10 +94,11 @@ impl JulesApp {
     }
 }
 fn run_app(
-    app: JulesApp,
+    app: &mut JulesApp,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     scroll: &mut u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    app.start_fetch(format!("v1alpha/sessions?pageSize=50"));
     loop {
         terminal.draw(|f| {
             let area = f.area();
@@ -109,17 +110,92 @@ fn run_app(
                     Constraint::Length(1),
                 ])
                 .split(area);
-            let header_text = format!("asd");
+            let header_text = format!("Jules TUI");
             let header = Paragraph::new(header_text)
-                .block(Block::default().borders(Borders::ALL).title("pu"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("List of sessions (max 50)"),
+                )
                 .style(
                     Style::default()
-                        .fg(ratatui::style::Color::Cyan)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 );
             f.render_widget(header, chunks[0]);
+            match app.api_response.try_read() {
+                Ok(r) => match serde_json::from_str::<SessionsPage>(r.as_str()) {
+                    Ok(v) => {
+                        let mut lines: Vec<Line> = Vec::new();
+                        if v.sessions.is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                "no sessions yet",
+                                Style::default().fg(Color::DarkGray),
+                            )));
+                        }
+                        for s in &v.sessions {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "-> {}",
+                                    match s["title"].clone() {
+                                        Value::String(s) => s,
+                                        _ => String::from("No title"),
+                                    }
+                                ),
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
+                            lines.push(Line::from(format!(
+                                "URL: {}",
+                                match s["url"].clone() {
+                                    Value::String(s) => s,
+                                    _ => String::from("No url"),
+                                }
+                            )));
+                        }
 
-            let mut lines: Vec<Line> = Vec::new();
+                        let comments = Paragraph::new(lines)
+                            .block(Block::default().borders(Borders::ALL).title("Comments"))
+                            .wrap(Wrap { trim: false })
+                            .scroll((*scroll, 0));
+                        f.render_widget(comments, chunks[1]);
+                    }
+                    Err(e) => {
+                        f.render_widget(
+                            Line::from(Span::styled(
+                                format!("{}: {}", e.to_string(), r),
+                                Style::default().fg(Color::Red),
+                            )),
+                            chunks[1],
+                        );
+                        drop(r);
+                    }
+                },
+                Err(e) => match e {
+                    std::sync::TryLockError::Poisoned(_) => {
+                        f.render_widget(
+                            Line::from(Span::styled(
+                                "the lock is poisoned. the fetcher thread probably paniced.",
+                                Style::default().fg(Color::Red),
+                            )),
+                            chunks[1],
+                        );
+                    }
+                    std::sync::TryLockError::WouldBlock => {
+                        f.render_widget(
+                            Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
+                            chunks[1],
+                        );
+                    }
+                },
+            }
+
+            let help = Paragraph::new(
+                "j/k or arrows to scroll, enter to select, esc to go back, q to quit",
+            )
+            .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(help, chunks[2]);
         })?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -147,8 +223,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut scroll: u16 = 0;
-    let app = JulesApp::new(format!("asd"));
-    let result = run_app(app, &mut terminal, &mut scroll);
+    let mut app = JulesApp::new(format!(
+        "AQ.Ab8RN6LYT8p7IElcMQbfqD5GvCrHj8pNna_9_WC_fEppVhwqGQ"
+    ));
+    let result = run_app(&mut app, &mut terminal, &mut scroll);
     let _ = disable_raw_mode();
     execute!(
         terminal.backend_mut(),
