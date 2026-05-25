@@ -1,0 +1,17 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - run: mv target/release/rust_tui "target/release/rust_tui-${{ github.ref_name }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/rust_tui-${{ github.ref_name }}
