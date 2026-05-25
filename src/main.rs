@@ -12,12 +12,13 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
-    style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span, Text},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
+use throbber_widgets_tui::{Throbber, ThrobberState};
 use std::{
     env,
     sync::{Arc, RwLock},
@@ -42,32 +43,17 @@ struct JulesApp {
 #[derive(Deserialize)]
 struct SessionsPage {
     sessions: Vec<Value>,
-    #[serde(rename = "nextPageToken")]
-    next_page_token: Option<String>,
-}
-#[derive(Deserialize)]
-struct SessionRes {
-    name: String,
-    id: String,
-    title: String,
-    state: String,
-    url: String,
-    #[serde(rename = "createTime")]
-    create_time: String,
-    #[serde(rename = "updateTime")]
-    update_time: String,
 }
 impl JulesApp {
     fn new(api_key: String) -> Self {
         let sessions_page = Arc::new(RwLock::new(None));
         let selected_session = Arc::new(RwLock::new(None));
-        let asd = Self {
+        Self {
             api_key,
             sessions_page,
             selected_session,
             selected_session_num: None,
-        };
-        return asd;
+        }
     }
     fn start_fetch<T>(
         &mut self,
@@ -79,20 +65,13 @@ impl JulesApp {
     {
         let key = self.api_key.clone();
         let api_response = target;
-        let routestr = route.clone();
-        // match self.api_response.try_write() {
-        //     Ok(w) => {
-        //         *w = ""
-        //     }
-        // }
-
         thread::spawn(move || {
             match api_response.try_write() {
                 Ok(mut w) => {
                     let client = get_client();
                     let response = (|| -> Result<T, ThreadSafeError> {
-                        let response = client
-                            .get(format!("https://jules.googleapis.com/{routestr}"))
+                            let response = client
+                                .get(format!("https://jules.googleapis.com/{route}"))
                             .header("x-goog-api-key", key)
                             .send();
                         let resres = response?;
@@ -114,12 +93,14 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     session_list_state: &mut ListState,
     session_view_scroll: &mut u16,
+    mut throbber_state: &mut ThrobberState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = app.start_fetch(
         format!("v1alpha/sessions?pageSize=50"),
         app.sessions_page.clone(),
     );
     loop {
+        throbber_state.calc_next();
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
@@ -171,10 +152,13 @@ fn run_app(
                                                 format!("v1alpha/sessions/{session_id}"),
                                                 app.selected_session.clone(),
                                             );
-                                            f.render_widget(
-                                                Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
-                                                chunks[1],
+                                            let throbber = Throbber::default().label("Loading...");
+                                            let t_area = ratatui::layout::Rect::new(
+                                                chunks[1].x + 1,
+                                                chunks[1].y,
+                                                25, 1,
                                             );
+                                            f.render_stateful_widget(throbber, t_area, &mut throbber_state);
                                         } else {
                                             f.render_widget(
                                                 Line::from(Span::styled("no sessions list available", Style::default().fg(Color::Red))),
@@ -193,10 +177,13 @@ fn run_app(
                                             );
                                         }
                                         std::sync::TryLockError::WouldBlock => {
-                                            f.render_widget(
-                                                Line::from(Span::styled("Waiting for sessions list...", Style::default().fg(Color::Red))),
-                                                chunks[1],
+                                            let throbber = Throbber::default().label("Loading...");
+                                            let t_area = ratatui::layout::Rect::new(
+                                                chunks[1].x + 1,
+                                                chunks[1].y,
+                                                25, 1,
                                             );
+                                            f.render_stateful_widget(throbber, t_area, &mut throbber_state);
                                         }
                                     }
                                 };
@@ -204,11 +191,14 @@ fn run_app(
 
                             }
                         },
-                        Err(e) =>{
-                            f.render_widget(
-                                Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
-                                chunks[1],
+                        Err(_) =>{
+                            let throbber = Throbber::default().label("Loading...");
+                            let t_area = ratatui::layout::Rect::new(
+                                chunks[1].x + 1,
+                                chunks[1].y,
+                                25, 1,
                             );
+                            f.render_stateful_widget(throbber, t_area, &mut throbber_state);
                         }
                     }
 
@@ -263,18 +253,20 @@ fn run_app(
                             Some(Err(e)) => {
                                 f.render_widget(
                                     Line::from(Span::styled(
-                                        format!("{}", e.to_string()),
+                                        e.to_string(),
                                         Style::default().fg(Color::Red),
                                     )),
                                     chunks[1],
                                 );
-                                drop(r);
                             }
                             None => {
-                                f.render_widget(
-                                    Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
-                                    chunks[1],
+                                let throbber = Throbber::default().label("Loading...");
+                                let t_area = ratatui::layout::Rect::new(
+                                    chunks[1].x + 1,
+                                    chunks[1].y,
+                                    25, 1,
                                 );
+                                f.render_stateful_widget(throbber, t_area, &mut throbber_state);
                                 let _ = app.start_fetch(
                                     format!("v1alpha/sessions?pageSize=50"),
                                     app.sessions_page.clone(),
@@ -292,10 +284,13 @@ fn run_app(
                                 );
                             }
                             std::sync::TryLockError::WouldBlock => {
-                                f.render_widget(
-                                    Line::from(Span::styled("Loading...", Style::default().fg(Color::Red))),
-                                    chunks[1],
+                                let throbber = Throbber::default().label("Loading...");
+                                let t_area = ratatui::layout::Rect::new(
+                                    chunks[1].x + 1,
+                                    chunks[1].y,
+                                    25, 1,
                                 );
+                                f.render_stateful_widget(throbber, t_area, &mut throbber_state);
                             }
                         },
                     }
@@ -368,8 +363,7 @@ fn run_app(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        eprintln!("Usage: {} <jules api key>", args[0]);
-        std::process::exit(1);
+        return error!("Usage: {} <jules api key>", args[0]);
     }
     let _ = enable_raw_mode();
     let mut stdout = io::stdout();
@@ -379,12 +373,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut session_list_state: ListState = ListState::default();
     let mut session_view_scroll: u16 = 0;
-    let mut app = JulesApp::new(format!("{}", &args[1]));
+    let mut throbber_state = ThrobberState::default();
+    let mut app = JulesApp::new(args[1].clone());
     let result = run_app(
         &mut app,
         &mut terminal,
         &mut session_list_state,
         &mut session_view_scroll,
+        &mut throbber_state,
     );
     let _ = disable_raw_mode();
     execute!(

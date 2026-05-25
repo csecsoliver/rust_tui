@@ -15,7 +15,9 @@ tasks:
           cargo build --release
     - upload: |
           cd rust_tui
-          hut git artifact upload target/release/rust_tui
+          TAG=$(git describe --tags --exact-match)
+          mv target/release/rust_tui "target/release/rust_tui-$TAG"
+          hut git artifact upload "target/release/rust_tui-$TAG"
 submitter:
     git.sr.ht:
         enabled: true
