@@ -1,25 +1,25 @@
+environment:
+  BUILD_SUBMITTER: git.sr.ht
+  GIT_REF: refs/tags/0.1.0
 image: alpine/latest
 packages:
-    - cargo
-    - hut
-    - openssl-dev
-    - linux-headers
+- cargo
+- hut
 secrets:
-    - 672f4388-c502-4fc2-b8e8-8cc0d2d5d6e9
-oauth: ""
+- 672f4388-c502-4fc2-b8e8-8cc0d2d5d6e9
 sources:
-    - https://git.sr.ht/~csoliver/rust_tui
-tasks:
-    - build: |
-          cd rust_tui
-          cargo build --release
-    - upload: |
-          cd rust_tui
-          TAG=$(git describe --tags --exact-match)
-          mv target/release/rust_tui "target/release/rust_tui-$TAG"
-          hut git artifact upload "target/release/rust_tui-$TAG"
+- "https://git.sr.ht/~csoliver/rust_tui#53d704bacef31818242a63eab381aeb3b76e7970"
 submitter:
-    git.sr.ht:
-        enabled: true
-        allow-refs:
-            - "refs/tags/*"
+  git.sr.ht:
+    enabled: true
+    allow-refs:
+    - refs/tags/*
+tasks:
+- build: |
+    cd rust_tui
+    cargo build --release
+- upload: |
+    cd rust_tui
+    TAG=$(git describe --tags --exact-match)
+    mv target/release/rust_tui "target/release/rust_tui-srht-$TAG"
+    hut git artifact upload "target/release/rust_tui-srht-$TAG"
